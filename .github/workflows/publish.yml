@@ -1,13 +1,22 @@
 name: Publish Image
 
-# Builds the upliftos-admission webhook server and publishes it to public GHCR.
+# Builds the upliftos-admission webhook server and publishes it to Docker Hub.
+#
+# Why Docker Hub and not GHCR: a customer's Kubernetes cluster pulls this image
+# during the UpliftOS connect flow, BEFORE any UpliftOS pull credentials exist in
+# the namespace — so it must be anonymously pullable. The upliftos GitHub org
+# disables public packages org-wide, so a public GHCR package is not available;
+# Docker Hub is unaffected by that policy. (ECR Public would need new IAM + a
+# vanity-alias approval for no added benefit.)
 #
 # push / pull_request → go test + a multi-arch BUILD (no push): proves it still
-#   compiles and images. Deliberately does NOT publish, so the first push to a
-#   fresh repo (or before the GHCR package is linked here) never fails on a
-#   package-permission error.
+#   compiles and images, and works on forks/PRs with no secrets.
 # workflow_dispatch (tag input, default v1) → BUILD + PUSH the immutable release
 #   tag the UpliftOS bootstrap manifest pins.
+#
+# Required repo secrets for publishing (Settings → Secrets → Actions):
+#   DOCKERHUB_USERNAME — a Docker Hub account with push rights on the org
+#   DOCKERHUB_TOKEN    — a Docker Hub *access token* (not the password)
 
 on:
   push:
@@ -22,12 +31,10 @@ on:
 
 permissions:
   contents: read
-  packages: write # push to GHCR via GITHUB_TOKEN
 
 env:
-  # Owner-derived so it matches the ref the bootstrap manifest pins:
-  # ghcr.io/upliftos/upliftos-admission.
-  IMAGE: ghcr.io/${{ github.repository_owner }}/upliftos-admission
+  # The exact ref bootstrap-manifest.ts pins.
+  IMAGE: docker.io/upliftos/upliftos-admission
 
 jobs:
   test:
@@ -64,13 +71,12 @@ jobs:
             echo "tags=${IMAGE}:ci" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         if: steps.meta.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build (and push when publishing)
         uses: docker/build-push-action@v6
@@ -79,8 +85,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ steps.meta.outputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
-          # Explicit source link so GHCR associates the package with THIS public
-          # repo, not whatever pushed it first.
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -9,7 +9,7 @@ connect flow, before any UpliftOS-supplied pull credentials exist in the
 namespace:
 
 ```
-ghcr.io/upliftos/upliftos-admission:v1
+docker.io/upliftos/upliftos-admission:v1
 ```
 
 ## What it enforces
@@ -64,10 +64,17 @@ docker build -t upliftos-admission .
 
 ## Publishing
 
-The image is published by `.github/workflows/publish.yml`:
+The image is published by `.github/workflows/publish.yml` to **Docker Hub**:
 
 - push / pull request → `go test` + a multi-arch build (no push);
 - manual **Run workflow** (tag input, default `v1`) → build **and push**
-  `ghcr.io/<owner>/upliftos-admission:<tag>` (+ a `sha-` tag).
+  `docker.io/upliftos/upliftos-admission:<tag>` (+ a `sha-` tag).
+
+Publishing needs two repo secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
+(a Docker Hub access token, not a password).
+
+Docker Hub rather than GHCR because the image must be **anonymously pullable** —
+a customer cluster pulls it before any UpliftOS credentials exist there — and the
+`upliftos` GitHub org disables public packages org-wide.
 
 Tags are immutable per release; the UpliftOS bootstrap manifest pins the tag.
