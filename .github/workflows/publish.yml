@@ -1,0 +1,87 @@
+name: Publish Image
+
+# Builds the upliftos-admission webhook server and publishes it to public GHCR.
+#
+# push / pull_request → go test + a multi-arch BUILD (no push): proves it still
+#   compiles and images. Deliberately does NOT publish, so the first push to a
+#   fresh repo (or before the GHCR package is linked here) never fails on a
+#   package-permission error.
+# workflow_dispatch (tag input, default v1) → BUILD + PUSH the immutable release
+#   tag the UpliftOS bootstrap manifest pins.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Immutable release tag to publish (e.g. v1)'
+        required: true
+        default: 'v1'
+
+permissions:
+  contents: read
+  packages: write # push to GHCR via GITHUB_TOKEN
+
+env:
+  # Owner-derived so it matches the ref the bootstrap manifest pins:
+  # ghcr.io/upliftos/upliftos-admission.
+  IMAGE: ghcr.io/${{ github.repository_owner }}/upliftos-admission
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Decide tags + whether to push
+        id: meta
+        run: |
+          SHORT="sha-${GITHUB_SHA::12}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "tags=${IMAGE}:${{ github.event.inputs.tag }},${IMAGE}:${SHORT}" >> "$GITHUB_OUTPUT"
+          else
+            # push / pull_request: build only, never publish.
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "tags=${IMAGE}:ci" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push when publishing)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.meta.outputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          # Explicit source link so GHCR associates the package with THIS public
+          # repo, not whatever pushed it first.
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
